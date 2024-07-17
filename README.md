@@ -1,3 +1,15 @@
+> [!NOTE]
+> 1. tile diffusion parameter(tile width, tile height, tile overlap) is based on latent tile size (corresponding to automatic111 sd-webui)
+> 2. Add Sanity Check node (using below) : reference [here](https://github.com/pkuliyi2015/multidiffusion-upscaler-for-automatic1111/blob/main/scripts/tilediffusion.py#L309)
+>    * Ignore tiling if there is only 1 tile or nothing
+>     <img width="932" alt="image" src="https://github.com/user-attachments/assets/572dbfd7-408b-4885-b9a6-dcae6747929d">
+> 
+> 3. comment out controlnet [self.switch_controlnet_tensors](https://github.com/Lhyejin/ComfyUI-TiledDiffusion-custom/blob/main/tiled_diffusion.py#L418)
+>    * This is for using tile-controlnet simultaneously
+
+
+----
+# Original Readme.md
 # Tiled Diffusion & VAE for ComfyUI
 
 Check out the [SD-WebUI extension](https://github.com/pkuliyi2015/multidiffusion-upscaler-for-automatic1111/) for more information.

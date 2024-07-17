@@ -9,6 +9,7 @@ from typing import List, Union, Tuple, Dict
 from nodes import ImageScale
 import comfy.utils
 from comfy.controlnet import ControlNet, T2IAdapter
+import math 
 
 opt_C = 4
 opt_f = 8
@@ -269,7 +270,7 @@ class AbstractDiffusion:
 
     @controlnet
     def switch_controlnet_tensors(self, batch_id:int, x_batch_size:int, tile_batch_size:int, is_denoise=False):
-        # if not self.enable_controlnet: return
+        if not self.enable_controlnet: return
         if self.control_tensor_batch is None: return
         # self.control_params = [0]
 
@@ -384,6 +385,7 @@ class MultiDiffusion(AbstractDiffusion):
             # init everything done, perform sanity check & pre-computations
             self.init_done()
         self.h, self.w = H, W
+
         # clear buffer canvas
         self.reset_buffer(x_in)
 
@@ -393,9 +395,10 @@ class MultiDiffusion(AbstractDiffusion):
                 if comfy.model_management.processing_interrupted(): 
                     # self.pbar.close()
                     return x_in
-
+                
                 # batching & compute tiles
                 x_tile = torch.cat([x_in[bbox.slicer] for bbox in bboxes], dim=0)   # [TB, C, TH, TW]
+                
                 n_rep = len(bboxes)
                 ts_tile = self.repeat_tensor(t_in, n_rep)
                 cond_tile = self.repeat_tensor(c_crossattn, n_rep)
@@ -412,7 +415,7 @@ class MultiDiffusion(AbstractDiffusion):
                             c_tile[key] = self.repeat_tensor(icond, n_rep)
 
                 # controlnet tiling
-                # self.switch_controlnet_tensors(batch_id, N, len(bboxes))
+                self.switch_controlnet_tensors(batch_id, N, len(bboxes))
                 if 'control' in c_in:
                     control=c_in['control']
                     self.process_controlnet(x_tile.shape, x_tile.dtype, c_in, cond_or_uncond, bboxes, N, batch_id)
@@ -541,7 +544,7 @@ class MixtureOfDiffusers(AbstractDiffusion):
                 # vcond_tile = torch.cat(vcond_tile_list, dim=0) if None not in vcond_tile_list else None # just repeat
 
                 # controlnet
-                # self.switch_controlnet_tensors(batch_id, N, len(bboxes), is_denoise=True)
+                self.switch_controlnet_tensors(batch_id, N, len(bboxes), is_denoise=True)
                 if 'control' in c_in:
                     control=c_in['control']
                     self.process_controlnet(x_tile.shape, x_tile.dtype, c_in, cond_or_uncond, bboxes, N, batch_id)
@@ -581,7 +584,7 @@ class TiledDiffusion():
                                 "tile_width": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 16}),
                                 # "tile_height": ("INT", {"default": 96, "min": 16, "max": 256, "step": 16}),
                                 "tile_height": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 16}),
-                                "tile_overlap": ("INT", {"default": 8*opt_f, "min": 0, "max": 256*opt_f, "step": 4*opt_f}),
+                                "tile_overlap": ("INT", {"default": 8*opt_f, "min": 0, "max": 256*opt_f, "step": 4}),
                                 "tile_batch_size": ("INT", {"default": 4, "min": 1, "max": MAX_RESOLUTION, "step": 1}),
                             }}
     RETURN_TYPES = ("MODEL",)
@@ -599,9 +602,10 @@ class TiledDiffusion():
         #     set_cache_callback = None # lambda x0, xt, prompts: self.noise_inverse_set_cache(p, x0, xt, prompts, steps, retouch)
         #     implement.init_noise_inverse(steps, retouch, get_cache_callback, set_cache_callback, renoise_strength, renoise_kernel_size)
 
-        implement.tile_width = tile_width // opt_f
-        implement.tile_height = tile_height // opt_f
-        implement.tile_overlap = tile_overlap // opt_f
+        # latent tile setting
+        implement.tile_width = tile_width
+        implement.tile_height = tile_height
+        implement.tile_overlap = tile_overlap
         implement.tile_batch_size = tile_batch_size
         # implement.init_grid_bbox(tile_width, tile_height, tile_overlap, tile_batch_size)
         # # init everything done, perform sanity check & pre-computations
@@ -612,6 +616,40 @@ class TiledDiffusion():
         model.set_model_unet_function_wrapper(implement)
         model.model_options['tiled_diffusion'] = True
         return (model,)
+
+
+# Sanity Check Node
+class TiledDiffusionSanityCheck():
+    @classmethod
+    def INPUT_TYPES(s) :
+        # height, width == final image height and width
+        return {"required": {
+            "original_model": ("MODEL", ),
+            "tiled_diffusion": ("MODEL", ),
+            "width": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 4}),
+            "height": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 4}),
+            "tile_width": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 16}),
+            "tile_height": ("INT", {"default": 96*opt_f, "min": 16, "max": MAX_RESOLUTION, "step": 16}),
+            "tile_overlap": ("INT", {"default": 8*opt_f, "min": 0, "max": 256*opt_f, "step": 4}),
+        }}
+    RETURN_TYPES = ("MODEL", "BOOLEAN",)
+    RETURN_NAMES = ("model", "bool",)
+    FUNCTION = "check"
+    CATEGORY = "Logic"
+
+    def check(self, original_model: ModelPatcher, tiled_diffusion: ModelPatcher, width, height, tile_width, tile_height, tile_overlap):
+        w, h = width // opt_f, height // opt_f
+        min_tile_size = min(tile_width, tile_height)
+        if tile_overlap >= min_tile_size:
+            tile_overlap = min_tile_size - 4
+        cols = math.ceil((w - tile_overlap) / (tile_width - tile_overlap))
+        rows = math.ceil((h - tile_overlap) / (tile_height - tile_overlap))
+        check = cols > 1 or rows > 1
+
+        model = tiled_diffusion if check else original_model
+        return (model, check)
+
+
 
 class NoiseInversion():
     @classmethod
@@ -633,11 +671,14 @@ class NoiseInversion():
                     latent_image, image, steps, retouch, renoise_strength, renoise_kernel_size):
         return (latent_image,)
 
+
 NODE_CLASS_MAPPINGS = {
     "TiledDiffusion": TiledDiffusion,
     # "NoiseInversion": NoiseInversion,
+    "TiledDiffusionSanityCheck": TiledDiffusionSanityCheck,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "TiledDiffusion": "Tiled Diffusion",
     # "NoiseInversion": "Noise Inversion",
+    "TiledDiffusionSanityCheck": "Tiled Diffusion Sanity Check"
 }

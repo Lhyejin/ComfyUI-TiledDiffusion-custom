@@ -4,7 +4,7 @@
     * Ignore tiling if there is only 1 tile or nothing
      <img width="932" alt="image" src="https://github.com/user-attachments/assets/572dbfd7-408b-4885-b9a6-dcae6747929d">
  
-3. comment out controlnet [self.switch_controlnet_tensors](https://github.com/Lhyejin/ComfyUI-TiledDiffusion-custom/blob/main/tiled_diffusion.py#L418)
+~~3. comment out controlnet [self.switch_controlnet_tensors](https://github.com/Lhyejin/ComfyUI-TiledDiffusion-custom/blob/main/tiled_diffusion.py#L418)~~
     * This is for using tile-controlnet simultaneously
 
 
